@@ -1,0 +1,169 @@
+---
+title: "PART2"
+author: "LAXMI"
+date: "6/15/2020"
+output: html_document
+---
+
+```{r}
+library("seqinr")
+library("R.utils")
+library("rBLAST")
+library("ape")
+library("ORFik")
+library("Biostrings")
+
+#1) Download the whole set of E. coli gene DNA sequences and use gunzip to decompress. Use the
+#makeblast() function to create a blast database. How many sequences are present in the E.coli set?
+
+url ="ftp://ftp.ensemblgenomes.org/pub/bacteria/release-42/fasta/bacteria_0_collection/escherichia_coli_str_k_12_substr_mg1655/cds/Escherichia_coli_str_k_12_substr_mg1655.ASM584v2.cds.all.fa.gz"
+destfile ="Escherichia_coli_str_k_12_substr_mg1655.ASM584v2.cds.all.fa.gz"
+download.file(url,destfile)
+
+# uncompress the file
+R.utils::gunzip("Escherichia_coli_str_k_12_substr_mg1655.ASM584v2.cds.all.fa.gz",overwrite=TRUE)
+
+# create the blast DB
+makeblastdb("Escherichia_coli_str_k_12_substr_mg1655.ASM584v2.cds.all.fa",dbtype="nucl", "-parse_seqids")
+
+ #How many sequences are present in the E.coli set
+seqinr::getLength(read.fasta("Escherichia_coli_str_k_12_substr_mg1655.ASM584v2.cds.all.fa"))
+
+
+
+#2)Download the sample fasta sequences and read them in as above. For your allocated sequence,
+#determine the length (in bp) and the proportion of GC bases.
+
+download.file("https://raw.githubusercontent.com/markziemann/SLE712_files/master/bioinfo_asst3_part2_files/sample.fa",destfile = "sample.fa")
+sample_file =read.fasta("sample.fa")
+str(sample_file)
+e.coli_gene_sequence_05 = sample_file[[5]]
+#e.coli_gene_sequence_05[1:50]
+str(e.coli_gene_sequence_05)
+# get sequence length and calculate the GC content
+seqinr::getLength(e.coli_gene_sequence_05)
+# GC Content
+seqinr::GC(e.coli_gene_sequence_05)
+#----------------------------------------------------------------------------------------
+
+
+#3)You will be provided with R functions to create BLAST databases and perform blast searches. Use
+#blast to identify what E. coli gene your sequence matches best. Show a table of the top 3 hits including
+#percent identity, E-value and bit scores
+
+
+#A function to run a BLASTN search
+#The function requires two inputs (1) the query sequence (R object) and the other is the database (system file). The output is a table of #BLAST results.
+
+
+myblastn_fun = function (myseq, db) 
+{
+  mytmpfile1 <- tempfile()
+  mytmpfile2 <- tempfile()
+  write.fasta(myseq, names = attr(myseq, "name"), file.out = mytmpfile1)
+  system2(command = "/usr/bin/blastn", args = paste("-db ", db, " -query", mytmpfile1, "-outfmt 6 -evalue 0.05 -ungapped >",  mytmpfile2))
+  res <- NULL
+  if (file.info(mytmpfile2)$size > 0) {
+    res <- read.csv(mytmpfile2, sep = "\t", header = FALSE)
+    colnames(res) <- c("qseqid", "sseqid", "pident", "length", "mismatch", "gapopen", "qstart", "qend", "sstart",  "send", "evalue", "bitscore")
+  }
+  unlink(c(mytmpfile1, mytmpfile2))
+  if (!is.null(res)) {
+    res <- res[order(-res$bitscore), ]
+  }
+  res
+}
+
+res = myblastn_fun(myseq =e.coli_gene_sequence_05, db = "Escherichia_coli_str_k_12_substr_mg1655.ASM584v2.cds.all.fa")
+
+str(res)
+
+head(res)
+
+hits <- as.character(res$sseqid)
+hits
+#Run a multiple sequence alignment and the top hits
+db <- read.fasta("Escherichia_coli_str_k_12_substr_mg1655.ASM584v2.cds.all.fa")
+str(db[1:6])
+head(names(db))
+
+#Now we can see how different the sequences are to one another with a multiple sequence alignment 
+myseqs <- db[which(names(db) %in% hits)] # extract the names of the top hits
+myseqs <- c(myseqs,sample_file) # add the Sample sequence
+seqinr::write.fasta(myseqs,names=names(myseqs),file.out = "myseqs.fa")
+
+#In detail comparison of SAMPLE_FILE and the top BLAST hit
+#We can run a BLASTN to create a pairwise alignment to identify the main differences between SOTS and the top hit.
+
+tophit <- db[which(names(db) %in% hits[1])] # extract the names of the top hit
+tophit[1:3]
+
+seqinr::write.fasta(tophit,names=names(tophit),file.out = "tophit.fa")
+makeblastdb("tophit.fa",dbtype="nucl", "-parse_seqids")
+res <- myblastn_fun(myseq = e.coli_gene_sequence_05, db = "tophit.fa")
+
+#4)You will be provided with a function that enables you to make a set number of point mutations to your
+#sequence of interest. Run the function and write an R code to check the number of mismatches
+#between the original and mutated sequence.
+
+#It randomly replaces a number of DNA bases with a random base. This is not strictly related to the hypothetical scenario but will be useful to complete the assessment
+#Mutation function
+mutator = function (myseq, nmut) 
+{
+  myseq_mod <- myseq
+  mypos <- sample(seq_along(myseq), nmut)
+  myseq_mod[mypos] <- sample(c("a", "c", "g", "t"), length(mypos), 
+                             replace = TRUE)
+  return(myseq_mod)
+}
+
+# create a mutated copy with 100 substitutions
+E.Coli_mut =  mutator(myseq=e.coli_gene_sequence_05,100)
+
+# now create a pairwise alignment
+E.Coli_mut_ <- DNAString(c2s(E.Coli_mut))
+e.coli_seq_5_ <- DNAString(c2s(e.coli_gene_sequence_05))
+aln <- Biostrings::pairwiseAlignment(e.coli_seq_5_,E.Coli_mut_)
+pid(aln)
+
+nmismatch(aln)
+
+
+
+#---------------------------------------------------------------------------
+#5)Using the provided functions for mutating and BLASTing a sequence, determine the number and
+#proportion of sites that need to be altered to prevent the BLAST search from matching the gene of
+#origin.Because the mutation is random, you may need to run this test multiple times to get a reliable
+#answer
+
+#Testing the limits of BLAST
+#After adding some mismatches to query sequence, we can check whether BLAST is still able to recognise the sequence
+# first need to write the blast index
+
+write.fasta(e.coli_gene_sequence_05,names="e.coli_gene_sequence_05",file.out = "e.coli_gene_sequence_05.fa")
+makeblastdb(file="e.coli_gene_sequence_05.fa",dbtype = "nucl")
+
+
+#test with 150 mismatches
+e.coli_mut <- mutator(myseq=e.coli_gene_sequence_05,150)
+res <- myblastn_fun(myseq =e.coli_mut, db = "Escherichia_coli_str_k_12_substr_mg1655.ASM584v2.cds.all.fa")
+res
+
+#test with 175 mismatches
+e.coli_mut <- mutator(myseq=e.coli_gene_sequence_05,175)
+res <- myblastn_fun(myseq =e.coli_mut, db = "Escherichia_coli_str_k_12_substr_mg1655.ASM584v2.cds.all.fa")
+res
+
+#test with 200 mismatches
+e.coli_mut <- mutator(myseq=e.coli_gene_sequence_05,200)
+res <- myblastn_fun(myseq =e.coli_mut, db = "Escherichia_coli_str_k_12_substr_mg1655.ASM584v2.cds.all.fa")
+res
+
+#test with 300 mismatches
+e.coli_mut <- mutator(myseq=e.coli_gene_sequence_05,300)
+res <- myblastn_fun(myseq =e.coli_mut, db = "Escherichia_coli_str_k_12_substr_mg1655.ASM584v2.cds.all.fa")
+res
+
+
+```
+
